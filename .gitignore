@@ -3,6 +3,3 @@
 
 # Ignore editor configurations
 .vscode/
-
-# Ignore private documentation files
-docs/roadmap.md
