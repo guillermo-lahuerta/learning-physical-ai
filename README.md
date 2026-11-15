@@ -57,6 +57,22 @@ The post covers the World Model; the Critic and Actor are still to come on Subst
 
 _The two components of the model state. Source: diagram generated with Claude Design for the Substack post._
 
+### October 10th, 2026
+
+I have published the second part of the series on Substack: [**How DreamerV3 dreams (Part II)**](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams-part-ii). This one covers the Critic: the difference between rewards and returns, the 15-step imagined rollouts used as training data, the λ-returns, and the two-hot loss that allows using the same hyperparameters across different games.
+
+### November 15th, 2026
+
+I have published the third (and last) part of the series: [**How DreamerV3 dreams (Part III)**](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams-part-iii). It covers the Actor: how its policy is trained on the same imagined rollouts as the Critic, the Advantage, the REINFORCE loss, the entropy regulariser that keeps it exploring, and the return normalisation.
+
+With this, the three components of DreamerV3 (World Model, Critic and Actor) are covered on Substack. The [repository guide](docs/how-dreamerv3-works.md) is now in sync with the three posts, including their figures and worked examples.
+
+![The imagined rollout used to train the Actor, where the Critic learns to predict the λ-returns and the Actor learns to choose actions that lead to higher ones](assets/images/13-actor-imagined-rollout.jpg)
+
+_The imagined rollout used to train the Critic and the Actor. Source: image generated with Claude Design for the Substack post._
+
+Next, I want to focus on something more practical: experimenting with virtual robots in Isaac Sim, NVIDIA's robotics simulation platform.
+
 ---
 
 ## References
@@ -67,6 +83,7 @@ Some of the material that got me started, in case it is useful for someone else:
 
 - [Yann LeCun's $1B Bet Against LLMs, Part 1](https://www.youtube.com/watch?v=kYkIdXwW2AE&t=1738s) and [Part 2](https://www.youtube.com/watch?v=v_jDvpEGTIg&t=150s), by Welch Labs. On why LeCun thinks the next step for AI is World Models, not bigger LLMs.
 - [Robotics' End Game: Nvidia's Jim Fan](https://www.youtube.com/watch?v=3Y8aq_ofEVs), by Sequoia Capital. On where robotics is going and the role of simulation and foundation models.
+- [AlphaGo - The Movie](https://www.youtube.com/watch?v=WXuK6gekU1Y), by Google DeepMind. The documentary about the match against Lee Sedol, which I use in Part II to introduce the Critic.
 
 ### Blogposts
 
