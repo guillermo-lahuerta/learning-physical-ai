@@ -20,12 +20,6 @@ That led me to the DreamerV3 paper, [Mastering Diverse Domains through World Mod
 
 However, understanding it proved harder than expected, probably because I was lacking some basic concepts about RL and World Models. This repository is my attempt to share **simplified explanations** that may be useful for anyone willing to learn more about Physical AI, without having any prior RL/Robotics experience. Writing them also helps me internalise the concepts and learn in the process.
 
-DreamerV3 later led me to a second paper, [R2-Dreamer: Redundancy-Reduced World Models without Decoders or Augmentation](https://openreview.net/forum?id=Je2QqXrcQq), which changes how the World Model learns its visual representation. For my study, I will use its authors' [NM512/r2dreamer](https://github.com/NM512/r2dreamer) codebase. It already includes both an R2-Dreamer configuration and a DreamerV3 baseline, and it is written in PyTorch, which I am more familiar with than JAX. That baseline is their reproduction of DreamerV3, rather than the original JAX implementation.
-
-## Objective
-
-This repository will be a summary of my personal study to understand the DreamerV3 and R2-Dreamer papers. I plan to compare the `DreamerV3` baseline implemented in [NM512/r2dreamer](https://github.com/NM512/r2dreamer) with `R2-Dreamer` on a simple visual task. I will document my progress here, and I hope **this could be useful for anyone else trying to get started in this field**. If it is, please feel free to reach out to me, for example, via [Linkedin](https://www.linkedin.com/in/guillermo-lahuerta/).
-
 ## How to follow along
 
 I will update this repo as I go with what I learned, what worked and what did not. The log below is kind of a **diary of the project**.
@@ -35,14 +29,6 @@ Note that **I do not commit to a fixed schedule**, so updates will be irregular.
 ---
 
 ## Log
-
-### July 5th, 2026
-
-I have started by creating this repo and writing this initial README to summarize this project (which for sure will evolve over time). My next step is to read the DreamerV3 paper to understand the model, and separately inspect `r2dreamer`, the codebase from the R2-Dreamer paper.
-
-### July 25th, 2026
-
-The last couple of weeks, I have focused on learning the basics of the two papers.
 
 ### September 18th, 2026
 
