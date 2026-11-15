@@ -1,4 +1,4 @@
-# Learning World Models
+# Learning Physical AI
 
 ## Context
 
