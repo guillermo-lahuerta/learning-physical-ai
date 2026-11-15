@@ -1,6 +1,6 @@
 # How DreamerV3 works
 
-_The World Model explanation below is adapted from my Substack post, [How DreamerV3 dreams](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams), published on September 18th, 2026. This repository version also includes draft sections on the Critic and Actor, which I have not yet published on Substack._
+_This guide is adapted from my Substack series: the World Model explanation comes from [How DreamerV3 dreams](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams) (September 18th, 2026), the Critic from [Part II](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams-part-ii) (October 10th, 2026) and the Actor from [Part III](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams-part-iii) (November 15th, 2026). This repository version keeps a few extra technical details that I left out of the posts._
 
 ## The model
 
@@ -284,6 +284,10 @@ Go back to Breakout for a moment. Moving the paddle to catch the ball might give
 
 That is what the **Critic** tries to measure. It takes the model state $s_t = (h_t, z_t)$ and estimates how much reward the agent can collect **from that point onward, following its current policy**. Think again of the chess player assessing a board: the number of pieces captured on this move does not tell us everything about the position.
 
+This idea has some history. In March 2016, DeepMind's [AlphaGo](https://deepmind.google/research/alphago/) beat Lee Sedol, one of the best Go players in the world. Back then, most Go programs used [Monte Carlo Tree Search](https://en.wikipedia.org/wiki/Monte_Carlo_tree_search) to simulate many games until the end and pick whatever path worked best. That does not scale well in Go, which has an average branching factor of about 250 moves per turn (Chess has about 35), so the number of possible futures quickly explodes.
+
+AlphaGo combined two Deep Neural Networks to deal with that. A **Policy Network** predicted the move an expert human would make, to narrow down the search space. A **Value Network** looked at the current board and predicted the probability of victory, which reduces the need to simulate sequences all the way to the end of the game. That Value Network is basically what we call the Critic in DreamerV3, and the Policy Network is the Actor. The main difference is that AlphaGo used its Value Network at inference time, whereas DreamerV3 uses the Critic only to train the Actor on imagined sequences, and ignores it during inference.
+
 ### Reward is not the same as return
 
 The **reward** is the feedback associated with one step. The **return** combines rewards across future steps. To give a little less weight to rewards further in the future, we use a **discount factor**, usually written as $\gamma$:
@@ -292,9 +296,11 @@ The **reward** is the feedback associated with one step. The **return** combines
 R_t = r_t + \gamma r_{t+1} + \gamma^2 r_{t+2} + \cdots
 ```
 
-For this part of the guide, $r_t$ means the reward on the transition from $s_t$ to $s_{t+1}$ after taking $a_t$. This convention keeps the reward, continuation and next-state value aligned in the equations below.
+For this part of the guide, $r_t$ means the reward on the transition from $s_t$ to $s_{t+1}$ after taking $a_t$. This convention keeps the reward, continuation and next-state value aligned in the equations below. (Part II of the Substack series writes the same reward as $\hat r_{t+1}$; only the index changes.)
 
-For example, imagine that a short sequence gives us rewards of 0, 0 and 5. With $\gamma = 0.9$, its discounted reward sum is $0 + 0.9 \times 0 + 0.9^2 \times 5 = 4.05$. We use 0.9 here just to make the arithmetic easier; the paper uses 0.997.
+For example, imagine that a short sequence gives us rewards of 0, 0 and 5. With $\gamma = 0.9$, its discounted reward sum is $0 + 0.9 \times 0 + 0.9^2 \times 5 = 4.05$. We use 0.9 here just to make the arithmetic easier; the paper uses 0.997, so the correction is quite subtle: after 15 steps the weight is still $0.997^{15} \approx 0.956$.
+
+Why does this matter in Breakout? Imagine that, in order to bounce the ball back, we need to move the paddle to the left three times. We get no reward for those movements, and not even for hitting the ball. The points only arrive when a brick is hit, which may be several steps ahead. Something has to tell the agent that moving left has a higher long-term value than staying still, which would mean missing the ball and losing the game.
 
 The reward predictor in the World Model estimates the reward for a step. The Critic estimates the **return**, including rewards that may come much later. These are different prediction problems.
 
@@ -302,27 +308,23 @@ The reward predictor in the World Model estimates the reward for a step. The Cri
 
 For someone used to supervised learning, there is an obvious question here: where are the labels? We cannot look up the true long-term return for every imagined state in a dataset.
 
-Instead, DreamerV3 constructs training targets using a combination of **imagined rewards** and the **Critic's own estimates**. To do that, it first creates a short imagined trajectory:
+A fair follow-up question is: why not use only real data? Do we really need imagination? The problem is that the logged data was produced by some earlier policy (a worse Actor, or an actual human player), but **the Critic must evaluate what the current Actor would do**. That is where imagination comes into play.
 
-1. Sample a real sequence from replay and infer its model states using the posterior.
-2. Pick those states as starting points for imagination, keeping the World Model parameters fixed during this stage.
+So DreamerV3 constructs training targets using a combination of **imagined rewards** and the **Critic's own estimates**. To do that, it first creates short imagined trajectories:
+
+1. Sample 16 real sequences of 64 steps from replay and infer the model state of each step using the posterior. That gives $16 \times 64 = 1{,}024$ model states.
+2. Treat each of those states as an independent starting point for imagination, keeping the World Model parameters fixed during this stage.
 3. Let the Actor choose an action from the current state.
 4. Advance the recurrent state and sample the next stochastic representation from the **prior**. Remember, there is no real future frame available here.
 5. Predict the reward and continuation, and repeat.
 
 The standard rollout makes **15 imagined transitions**, so there are 16 states including the starting state. All this happens in the compact state representation; there is no need to redraw the Breakout screen at every step.
 
-```mermaid
-flowchart LR
-    S0["State inferred from replay"] --> A["Actor chooses action"]
-    A --> WM["Frozen World Model<br/>advances state using prior"]
-    WM --> S1["Next imagined state"]
-    S1 --> R["Reward and continuation"]
-    S1 --> C["Critic estimates return"]
-    S1 --> A
-```
+![The 15-step rollout: 16 sequences of 64 real steps are encoded with the posterior, and each of the 1,024 resulting states starts a 15-step imagined rollout driven by the Actor and the prior](../assets/images/10-the-15-step-rollout.jpg)
 
-But why stop after 15 steps? Because the World Model can make mistakes, and those mistakes can accumulate as it imagines further into the future. Short rollouts, repeatedly grounded in real starting states, limit that problem.
+_Figure 9: The 15-step rollout. Source: image generated with Claude Design for the Substack post._
+
+But why stop after 15 steps instead of imagining until the end of the game? There are two reasons. It would be **inefficient**: in games like Minecraft, an episode can have thousands of steps. And it would be **inaccurate**: the World Model can make mistakes, and those mistakes accumulate as it imagines further into the future. Short rollouts, repeatedly grounded in real starting states, limit that problem.
 
 ### Looking beyond the last imagined step
 
@@ -330,13 +332,30 @@ There is a catch: the game does not end just because our imagined trajectory doe
 
 DreamerV3 uses the Critic's estimate at the last state to account for what could happen beyond the rollout. This is called **bootstrapping**: using an existing estimate to help construct a new training target.
 
-Let $V(s_t)$ denote the Critic's expected return at state $s_t$. At the final imagined state $s_H$, we start with:
+Let $V(s_t)$ denote the Critic's expected return at state $s_t$. To see how the bootstrap works, take a toy rollout with only 4 imagined steps (instead of 15), so 5 model states from $s_0$ to $s_4$. Suppose the imagined rewards are 2, 0, 5 and 0, and that the Critic estimates $V(s_4) = 3$ for the last state. With $\gamma = 0.997$, the return of the whole sequence is:
 
 ```math
-R_H^\lambda = V(s_H)
+R_0 = r_0 + \gamma r_1 + \gamma^2 r_2 + \gamma^3 r_3 + \gamma^4 V(s_4)
+= 2 + 0.997 \times 0 + 0.997^2 \times 5 + 0.997^3 \times 0 + 0.997^4 \times 3 \approx 9.934
 ```
 
-We then work **backwards**, combining the reward at each step with an estimate of what comes next:
+In the same way that the Critic estimated the value of the last state, it can estimate the value of the first one, $V(s_0)$. **The better the Critic, the closer $V(s_0)$ should be to $R_0$**, so $R_0$ becomes a training target for $V(s_0)$. For a single imagined trajectory the two will almost never be identical: $V(s_0)$ is an expected return, an average over all possible futures, while $R_0$ comes from just one of them.
+
+You may be wondering whether this is circular, since $R_0$ depends on the Critic itself through $V(s_4)$. It is. The trick that makes it work is treating the calculated return as a **fixed target** and only updating the Critic's weights so that $V(s_0)$ matches it. The hope is that, with enough updates, the Critic converges towards the true value of each state.
+
+It would be a pity to roll out several steps just to get one training pair, so we repeat the process from every intermediate state, which gives one target per imagined step ($R_0$, $R_1$, $R_2$ and $R_3$ in the toy example). Starting from $R_H = V(s_H)$ at the last state and working **backwards**, all of them follow the same formula:
+
+```math
+R_t = r_t + \gamma R_{t+1}
+```
+
+This version blindly trusts the World Model, which supplies every imagined reward, so the Critic's training is only as good as the World Model is. At the other extreme, we could trust the World Model only for the immediate reward and use the Critic for everything after that:
+
+```math
+R_t = r_t + \gamma V(s_{t+1})
+```
+
+Now the target is only as good as the Critic is. DreamerV3 uses a hybrid of the two, and also accounts for the possibility that the episode ends:
 
 ```math
 R_t^\lambda
@@ -351,7 +370,7 @@ There are a few symbols here, but each one has a simple job:
 - $\gamma$ discounts future rewards.
 - $\lambda$ mixes the next state's Critic estimate with the return target calculated from the rest of the rollout.
 
-When $\lambda$ is zero, we rely on the next state's value after just one reward. When it is one, we follow the imagined rewards all the way to the final bootstrap. DreamerV3 uses 0.95, mixing predictions across different lengths. These targets are called **λ-returns**.
+When $\lambda$ is zero, we rely on the next state's value after just one reward, which is the second extreme above. When it is one, we follow the imagined rewards all the way to the final bootstrap, which is the first one. DreamerV3 uses 0.95, so it clearly leans towards the World Model while still mixing predictions across different lengths. These targets are called **λ-returns**.
 
 Let's make this less abstract. Suppose we imagine only two transitions, with rewards 0 and 2. The Critic estimates $V(s_1)=4$ and $V(s_2)=10$. For this toy calculation, use $\gamma=0.9$, $\lambda=0.5$, and assume the episode continues:
 
@@ -363,42 +382,59 @@ Let's make this less abstract. Suppose we imagine only two transitions, with rew
 
 So the training target for the first state is 6.75, even though its immediate reward was zero. Note that this is an **estimated return**, not a score we actually observed in the real game.
 
+A short note on AlphaGo, now that we know what $\lambda$ does. Earlier I said that its Value Network removed the need to simulate games to the end, but that was a simplification: AlphaGo mixed both. Each leaf of the search tree was evaluated as a 50/50 split between the Value Network's estimate and the result of a rollout played to the end of the game with a policy network. So we could say it used something like $\lambda = 0.5$ (it is not the same formula as in DreamerV3, but the intuition is similar).
+
 ### What does the Critic actually predict?
 
-We have been writing $V(s_t)$ as a single number to keep the explanation simple. In DreamerV3, however, the Critic predicts a **distribution over possible returns**. Its expected value is the number used in the calculations above.
-
-Why a distribution? Because the same state can lead to different outcomes, and reward scales vary a lot across tasks. The network assigns probabilities to a fixed set of return values, called **bins**. Its scalar estimate is their probability-weighted average.
-
-The return target is represented using the two neighbouring bins, with more weight on the closer one. This is called a **two-hot target**. It allows a target to fall between bins instead of being rounded to one of them.
-
-The Critic is then trained to match those targets. Conceptually, its main loss is:
+We now have a training set: with 1,024 starting states and 15 imagined steps each, every batch gives $1{,}024 \times 15 = 15{,}360$ pairs of a fixed return target $R_t^\lambda$ and the Critic's prediction $V(s_t)$. As in any supervised learning problem, the goal is to update the network's weights to minimise a loss function. One obvious candidate is the squared error:
 
 ```math
 \mathcal{L}_{\text{Critic}}
-= -\sum_t \log p_\psi\left(\operatorname{sg}(R_t^\lambda) \mid s_t\right)
+= \sum_t \left(V(s_t) - \operatorname{sg}(R_t^\lambda)\right)^2
 ```
 
-Here $\psi$ represents the Critic's parameters, and $\operatorname{sg}$ means *stop gradient*: the target is treated as fixed for this update. In practice, the distributional loss is implemented using cross entropy with the two-hot targets.
+Here $\operatorname{sg}$ means *stop gradient*: even though the target depends on the Critic itself, it is treated as fixed for this update.
+
+DreamerV3 does not use this loss, though. We have been writing $V(s_t)$ as a single number to keep the explanation simple, but the Critic actually predicts a **distribution over possible returns**. The network assigns probabilities to a fixed set of return values, called **bins**, and its scalar estimate is their probability-weighted average. That average is the number used in the calculations above.
+
+Why go through the extra complexity? Because it lets DreamerV3 use the same hyperparameters across very different tasks. Some games give 1 point as a reward and others give 10,000. With a squared error, environments with large returns could generate very large gradients and make training unstable, so we would need different hyperparameters depending on the magnitude of the rewards in each game.
+
+The return target is represented using its two neighbouring bins. The closer bin gets a larger share, and the shares are chosen so that the weighted average of the two bin values equals the target exactly. This is called a **two-hot target**. For example, a target of 7 sitting between the bins 5 and 10 is encoded as 60% on bin 5 and 40% on bin 10, since $0.6 \times 5 + 0.4 \times 10 = 7$.
+
+![A two-hot target for a return of 7, with 60% on bin 5 and 40% on bin 10, next to the Critic's predicted distribution over bins, whose weighted average is 6.3](../assets/images/11-return-distribution-over-bins.jpg)
+
+_Figure 10: Return as a distribution over bins. Source: image from the Substack post._
+
+The bins are dense near zero and spread out for large values, so they can cover both small and very large returns. The figure shows only a handful of them; the actual Critic uses **255 bins**. During training, the goal is to compare the two distributions and push the predicted bars towards the target ones.
+
+The problem then becomes a classification one, where we can use cross entropy as the loss function:
+
+```math
+\mathcal{L}_{\text{Critic}}
+= -\sum_t \sum_k y_k\left(\operatorname{sg}(R_t^\lambda)\right)\log P_k(s_t)
+```
+
+Here $y_k$ is the target weight assigned to bin $k$ under the two-hot encoding, and $P_k(s_t)$ is the Critic's predicted probability for that bin.
 
 For an ML practitioner, the update looks familiar: produce predictions, construct targets, and minimise a prediction loss. The unusual part is that those targets contain predictions from the World Model and the Critic itself.
 
-One final detail: the Critic does not learn exclusively from imagination. The paper also trains it on **replayed real trajectories**, using real rewards and imagined returns to build additional targets, with a smaller loss weight of 0.3. It also regularises the Critic towards a slowly moving average of itself, helping stabilise learning when the targets keep changing.
+One final detail: the Critic does not learn exclusively from imagination. The paper also trains it on **replayed real trajectories**, using real rewards and imagined returns to build additional targets, with a smaller loss weight of 0.3. Why? In imagination, every reward comes from the World Model. If the World Model is bad at predicting rewards (which is likely when rewards are rare or hard to predict), the Critic would be learning from wrong estimates. Real data helps, especially at the beginning of training. The paper also regularises the Critic towards a slowly moving average of itself, helping stabilise learning when the targets keep changing.
 
 ## The Actor
 
 We can now imagine what happens, and estimate how valuable the resulting states are. The remaining question is **which actions the agent should learn to take**.
 
-That is the Actor's job. It receives the same model state $s_t = (h_t, z_t)$ and outputs a **policy**: a distribution over the actions it can take.
+Back to the chess analogy: the World Model tells us what the board might look like after a move, and the Critic tells us how promising that new board is. But neither of them decides which piece to move. That is the Actor's job. It receives the same model state $s_t = (h_t, z_t)$ and outputs a **policy**: a distribution over the actions it can take.
 
-In our simplified Breakout example, imagine that the available actions are moving left, staying still, and moving right:
+In our simplified Breakout example, imagine that the ball is moving towards the left, and that the available actions are moving left, staying still, and moving right. After enough training, the policy should look something like this:
 
 | Action | Probability |
 | :--- | ---: |
-| Move left | 0.20 |
-| Stay still | 0.30 |
-| Move right | 0.50 |
+| Move left | 0.70 |
+| Stay still | 0.20 |
+| Move right | 0.10 |
 
-The Actor samples an action from this distribution. It is most likely to move right, but the other two actions are still possible. In mathematical notation:
+The Actor samples an action from this distribution. It is most likely to move left, but the other two actions are still possible. In mathematical notation:
 
 ```math
 a_t \sim \pi_\theta(a_t \mid s_t)
@@ -406,19 +442,32 @@ a_t \sim \pi_\theta(a_t \mid s_t)
 
 Here $\pi$ is the policy, and $\theta$ represents the Actor's parameters. For tasks with continuous actions, the policy uses a continuous distribution instead; the idea of sampling an action remains the same.
 
+Note that the Actor does not see the pixels of the Breakout frame. Its input is the latent representation of that frame.
+
+![The World Model encodes a Breakout frame into the model state, and the Actor maps that state to action probabilities of 70% left, 20% stay and 10% right](../assets/images/12-actor-policy.png)
+
+_Figure 11: The Actor's policy for a given model state. Source: image generated with Claude Design for the Substack post._
+
 ### How does it learn which actions are useful?
 
-During imagination, the Actor supplies the actions that drive the rollout described in the Critic section. We then calculate the λ-returns for that trajectory and compare them with the Critic's expectations.
+The Actor is trained on the **same imagined rollouts** as the Critic: 1,024 real starting states encoded with the posterior, and 15 imagined steps from each, in which the Actor samples the actions and the frozen World Model predicts the next state, reward and continuation. That gives $1{,}024 \times 15 = 15{,}360$ imagined decisions per batch. The difference is what each component does with the resulting λ-returns:
 
-This difference is called the **advantage**:
+- The **Critic** learns to predict them.
+- The **Actor** learns to choose actions that lead to higher ones.
+
+![The imagined rollout used to train the Actor: the Critic learns to predict the λ-returns built from predicted rewards, continuation and values, while the Actor learns to choose actions that lead to higher ones](../assets/images/13-actor-imagined-rollout.jpg)
+
+_Figure 12: The imagined rollout used to train the Actor. Source: image generated with Claude Design for the Substack post._
+
+To do that, we compare what happened in the imagined trajectory with what the Critic expected to happen. This difference is called the **advantage**:
 
 ```math
 A_t = R_t^\lambda - V(s_t)
 ```
 
-Suppose the Critic expected a return of 5 from the current state. The Actor samples “move right”, and the imagined trajectory gives us a return target of 8. The advantage is $8 - 5 = 3$: that sampled action turned out better than the Critic expected.
+Suppose the Critic expected a return of 4 from the current state, $V(s_t) = 4$. The Actor samples “move left”, and the imagined trajectory gives us a λ-return of 7. The advantage is $7 - 4 = 3$: that sampled action turned out better than the Critic expected.
 
-If another sampled action produced a return target of 2, the advantage would be $2 - 5 = -3$. That action turned out worse than expected. These are toy estimates, of course; in training both the World Model and the Critic can be wrong.
+If another sampled action produced a λ-return of 1, the advantage would be $1 - 4 = -3$. That action turned out worse than expected. These are toy estimates, of course; in training both the World Model and the Critic can be wrong.
 
 The Actor update uses this signal to **increase the probability of actions with positive advantage**, and decrease the probability of actions with negative advantage. It learns from many sampled trajectories; it does not need to try every possible action from each state.
 
@@ -433,13 +482,21 @@ Why does this work? If the advantage is positive, increasing the sampled action'
 
 This is a **policy gradient** update, using the **REINFORCE** estimator. The advantage is treated as a fixed training signal during the Actor update. The Actor is learning how to change its own action probabilities, while the World Model's parameters remain fixed during this stage.
 
+Note that there are no manual labels telling the Actor what the correct action was. The supervision comes purely from the imagined consequences of whatever action it sampled. The caveat is that training is only as good as the World Model and the Critic are: wrong signals from those two components lead to a bad policy.
+
 ### Why not always choose the most likely action?
 
-Imagine that, early in training, moving right happens to produce a few good outcomes. If the Actor immediately put all its probability on that action, it could miss useful strategies involving the other actions.
+Imagine that, early in training, moving left happens to produce a few good outcomes. If the Actor immediately put all its probability on that action, it could miss other actions that lead to higher returns in the long run.
 
-DreamerV3 therefore also encourages **exploration** through an **entropy bonus**. Entropy measures how spread out a probability distribution is: a policy that gives several actions a chance has more entropy than one that always selects the same action.
+This is the classic **exploration vs exploitation** problem in Reinforcement Learning, which may be familiar if you have worked with multi-armed bandits. Exploration means trying something different to detect good alternatives; exploitation means choosing the actions we already know give good returns. Minecraft is a good example of why this matters: to get a diamond, the agent needs to discover several different items in order, and an Actor that settles for the first thing that works (collecting wood, say) would never get there. DreamerV3 was the first algorithm to collect diamonds from scratch, without using any human data.
 
-With that bonus included, and still leaving out return normalisation, the simplified loss becomes:
+DreamerV3 encourages exploration through an **entropy regulariser**. Entropy measures how spread out a probability distribution is: a policy that gives the same probability to moving left, staying still and moving right has high entropy, while one that puts 99% on moving left has low entropy.
+
+![A high-entropy policy with about 33% on each action, which tries alternatives, next to a low-entropy policy with 99% on moving left, which repeats what already works](../assets/images/14-entropy-high-vs-low.jpg)
+
+_Figure 13: A high-entropy policy vs a low-entropy one. Source: image generated with Claude Design for the Substack post._
+
+With that term included, and still leaving out return normalisation, the simplified loss becomes:
 
 ```math
 \mathcal{L}_{\text{Actor}}
@@ -449,11 +506,29 @@ With that bonus included, and still leaving out return normalisation, the simpli
 \right]
 ```
 
-Here $\mathcal{H}$ is the policy entropy and $\eta$ controls the strength of the bonus. Because we minimise the negative of the bracketed expression, greater entropy lowers the loss. This encourages exploration without requiring the Actor to keep every action equally likely.
+Here $\mathcal{H}$ is the policy entropy and $\eta$ controls how much we care about exploration. Because we minimise the negative of the bracketed expression, greater entropy lowers the loss. This encourages exploration without requiring the Actor to keep every action equally likely. DreamerV3 sets $\eta = 0.0003$, so the entropy term is just a very small push.
 
-There is another practical issue. A return difference of 100 might be enormous in one environment and quite ordinary in another. If we used those raw differences everywhere, the balance between learning from returns and exploring would change dramatically across tasks.
+There is one problem left. The coefficient $\eta$ is fixed, but the size of the advantage depends on the game. Where every move gives 1 point, an advantage of 3 is a big deal. Where rewards are around 10,000, advantages could easily be in the thousands; the entropy term would then be irrelevant and the Actor would stop exploring very early. We would need a different $\eta$ for each game.
 
-DreamerV3 handles this with **return normalisation**. It estimates the spread between the 5th and 95th percentiles of the return targets, smooths that estimate over time, and divides the advantage by that spread, with a minimum denominator of 1. So large signals are scaled down, while small signals are not amplified. This helps keep the same exploration coefficient useful across environments with very different rewards.
+This is the same scale problem the Critic had, which was solved there with the two-hot encoding. For the Actor, DreamerV3 uses a different trick: **return normalisation**. The advantage is divided by the range of the returns, denoted $S$:
+
+```math
+S = \operatorname{EMA}\left(\operatorname{Per}(R_t^\lambda, 95) - \operatorname{Per}(R_t^\lambda, 5),\ 0.99\right)
+```
+
+In plain English: take all the λ-returns of the batch, calculate the difference between their 95th and 5th percentiles, and smooth that value with an exponential moving average (EMA) so that it does not jump too much from one training step to the next.
+
+The advantage is not divided by $S$ directly, but by $\max(1, S)$. Why? Imagine a game where rewards are very rare, so almost all the returns are close to zero. $S$ could be something like 0.01, and dividing by it would multiply the advantages by 100. Those advantages are mostly noise (they come from the estimates of the World Model and the Critic), and we do not want to amplify noise. With $\max(1, S)$, large signals are scaled down while small ones are left untouched. Following the earlier example, if $S = 10$, our advantage of 3 becomes 0.3.
+
+With this last piece, we have the Actor loss as written in the paper (Equation 6):
+
+```math
+\mathcal{L}_{\text{Actor}}
+= -\sum_t \left[
+\operatorname{sg}\left(\frac{A_t}{\max(1, S)}\right)\log\pi_\theta(a_t \mid s_t)
++ \eta\,\mathcal{H}\left[\pi_\theta(\cdot \mid s_t)\right]
+\right]
+```
 
 The equations above show the main idea. The full implementation also weights imagined training steps by discounting and the probability of reaching them, so an imagined state far beyond a likely episode ending has less influence on the update.
 
@@ -518,7 +593,7 @@ For example, **symlog** works like a logarithm that also accepts negative number
 
 ![Symlog compresses large positive and negative values while remaining close to the identity near zero](../assets/images/symlog-transform.png)
 
-_Figure 9: The symlog transform across small and large signed values._
+_Figure 14: The symlog transform across small and large signed values._
 
 These techniques address different problems. Symlog is used for vector observations, while reward and return prediction use two-hot targets over exponentially spaced bins. They help accommodate different numerical scales without changing what the agent is trying to achieve.
 
@@ -537,6 +612,8 @@ These techniques address different problems. Symlog is used for vector observati
 ## Sources
 
 - [How DreamerV3 dreams](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams), my published World Model explanation.
+- [How DreamerV3 dreams (Part II)](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams-part-ii), my published Critic explanation.
+- [How DreamerV3 dreams (Part III)](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams-part-iii), my published Actor explanation.
 - [Mastering Diverse Control Tasks through World Models](https://www.nature.com/articles/s41586-025-08744-2), the published DreamerV3 paper, including its Critic and Actor learning sections.
 - [Mastering Diverse Domains through World Models](https://arxiv.org/abs/2301.04104), the arXiv version, which supplies the benchmark and training figures used here.
 - [Official DreamerV3 implementation](https://github.com/danijar/dreamerv3), including its [agent losses](https://github.com/danijar/dreamerv3/blob/main/dreamerv3/agent.py) and [model configurations](https://github.com/danijar/dreamerv3/blob/main/dreamerv3/configs.yaml).
