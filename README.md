@@ -42,36 +42,27 @@ I have started by creating this repo and writing this initial README to summariz
 
 ### July 25th, 2026
 
-The last couple of weeks, I have focused on learning the basics of the two papers. Find my summaries in the following links:
-
-- [docs/how-dreamerv3-works.md](docs/how-dreamerv3-works.md)
-- [docs/how-r2-dreamer-works.md](docs/how-r2-dreamer-works.md)
+The last couple of weeks, I have focused on learning the basics of the two papers.
 
 ### September 18th, 2026
 
 I have published my Substack post: [**How DreamerV3 dreams**](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams). It is a simplified guide to the World Model, using Atari's Breakout to explain the recurrent state, the stochastic representation, and how the model learns to imagine.
 
-The post covers the World Model; the Critic and Actor are still to come on Substack. The [repository guide](docs/how-dreamerv3-works.md) now includes draft sections on both, alongside the technical explanation from the published post.
+The post covers the World Model; the Critic and Actor are still to come on Substack.
 
-![Breakout example showing how recurrent and stochastic states combine past context with the current frame](assets/images/5-state-components.svg)
-
-_The two components of the model state. Source: diagram generated with Claude Design for the Substack post._
+![](assets/images/image-pick-part-1.png)
 
 ### October 10th, 2026
 
 I have published the second part of the series on Substack: [**How DreamerV3 dreams (Part II)**](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams-part-ii). This one covers the Critic: the difference between rewards and returns, the 15-step imagined rollouts used as training data, the λ-returns, and the two-hot loss that allows using the same hyperparameters across different games.
 
+![](assets/images/image-pick-part-2.png)
+
 ### November 15th, 2026
 
 I have published the third (and last) part of the series: [**How DreamerV3 dreams (Part III)**](https://guillelahuerta.substack.com/p/how-dreamerv3-dreams-part-iii). It covers the Actor: how its policy is trained on the same imagined rollouts as the Critic, the Advantage, the REINFORCE loss, the entropy regulariser that keeps it exploring, and the return normalisation.
 
-With this, the three components of DreamerV3 (World Model, Critic and Actor) are covered on Substack. The [repository guide](docs/how-dreamerv3-works.md) is now in sync with the three posts, including their figures and worked examples.
-
-![The imagined rollout used to train the Actor, where the Critic learns to predict the λ-returns and the Actor learns to choose actions that lead to higher ones](assets/images/13-actor-imagined-rollout.jpg)
-
-_The imagined rollout used to train the Critic and the Actor. Source: image generated with Claude Design for the Substack post._
-
-Next, I want to focus on something more practical: experimenting with virtual robots in Isaac Sim, NVIDIA's robotics simulation platform.
+![](assets/images/image-pick-part-3.png)
 
 ---
 
